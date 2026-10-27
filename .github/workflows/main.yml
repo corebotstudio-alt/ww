@@ -1,0 +1,77 @@
+name: PufferPanel & Cloudflare Tunnel (12 Sequential Sessions)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  setup-and-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    # Executes 12 jobs strictly one after another
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        session: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+
+    name: Session ${{ matrix.session }} of 12
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install PufferPanel
+        run: |
+          echo "=========================================================="
+          echo "Installing PufferPanel for Session ${{ matrix.session }}..."
+          echo "=========================================================="
+          curl -s https://packagecloud.io/install/repositories/pufferpanel/pufferpanel/script.deb.sh | sudo bash
+          sudo apt-get update
+          sudo apt-get install -y pufferpanel
+
+      - name: Create Admin Account & Start PufferPanel
+        run: |
+          echo "Creating admin user: admin / admin"
+          # Inputs: Username -> Email -> Password -> Confirm Password -> Admin? (Y)
+          printf "admin\nadmin@example.com\nadmin\nadmin\nY\n" | sudo pufferpanel user add
+
+          echo "Starting PufferPanel service..."
+          sudo systemctl enable --now pufferpanel
+
+          # Wait a few seconds for PufferPanel to bind to port 8080
+          sleep 4
+          sudo systemctl status pufferpanel --no-pager || true
+
+      - name: Install Cloudflared
+        run: |
+          echo "Installing cloudflared..."
+          curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o cloudflared.deb
+          sudo dpkg -i cloudflared.deb
+          rm cloudflared.deb
+
+      - name: Start Cloudflare Tunnel
+        env:
+          CLOUDFLARE_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
+        run: |
+          if [ -z "$CLOUDFLARE_TUNNEL_TOKEN" ]; then
+            echo "::error ::CLOUDFLARE_TUNNEL_TOKEN secret is not set! Please add it in your GitHub repository secrets."
+            exit 1
+          fi
+
+          echo "=========================================================="
+          echo "Starting Cloudflare Tunnel for Session ${{ matrix.session }}..."
+          echo "=========================================================="
+
+          # Start cloudflared in the background
+          cloudflared tunnel run --token "$CLOUDFLARE_TUNNEL_TOKEN" &
+
+          sleep 5
+          echo "Tunnel connected! PufferPanel (port 8080) is accessible via your domain."
+
+      - name: Keep Runner Alive (~5h 50m)
+        run: |
+          echo "Session ${{ matrix.session }} is actively running PufferPanel."
+          echo "Next session will automatically take over the tunnel when this finishes."
+          # Sleep for ~5 hours 50 minutes (21000s) to transition cleanly before GitHub's 6-hour limit
+          sleep 21000
