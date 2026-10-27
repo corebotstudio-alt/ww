@@ -1,12 +1,12 @@
-name: PufferPanel & Cloudflare CLI Tunnel
+name: PufferPanel & Cloudflare Tunnel
 
 on:
   workflow_dispatch:
 
 jobs:
-  setup-and-run:
+  run-panel:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 360 # Max runner duration (6 hours)
 
     steps:
       - name: Checkout code
@@ -14,7 +14,9 @@ jobs:
 
       - name: Install Latest PufferPanel
         run: |
-          echo "Installing PufferPanel..."
+          echo "=========================================================="
+          echo "Installing Latest PufferPanel..."
+          echo "=========================================================="
           sudo apt-get update
           sudo apt-get install -y curl gnupg apt-transport-https
 
@@ -41,33 +43,56 @@ jobs:
 
           echo "Starting PufferPanel service..."
           sudo systemctl enable --now pufferpanel
-          sleep 4
 
-      - name: Install Cloudflare CLI (cloudflared)
+          echo "Waiting for PufferPanel to be ready on port 8080..."
+          for i in {1..30}; do
+            if curl -s http://127.0.0.1:8080 > /dev/null; then
+              echo "PufferPanel is up and responding!"
+              break
+            fi
+            echo "Waiting for service to start... ($i/30)"
+            sleep 2
+          done
+
+      - name: Install Cloudflare CLI
         run: |
-          echo "Installing Cloudflare CLI..."
+          echo "Installing cloudflared..."
           curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o cloudflared.deb
           sudo dpkg -i cloudflared.deb
           rm cloudflared.deb
 
-      - name: Start Cloudflare CLI Tunnel & Print Link
+      - name: Start Cloudflare Tunnel & Extract Link
         run: |
-          echo "Starting Cloudflare Quick Tunnel on port 8080..."
-          # Start cloudflared directly via CLI without any tokens or account
-          cloudflared tunnel --url http://localhost:8080 --logfile /tmp/cloudflared.log &
+          echo "Starting Cloudflare Quick Tunnel..."
+          # Target IPv4 127.0.0.1 to avoid IPv6 502 errors
+          cloudflared tunnel --url http://127.0.0.1:8080 --logfile /tmp/cloudflared.log &
 
-          # Wait for the tunnel link to be generated
-          sleep 6
+          echo "Waiting for Cloudflare to generate your public link..."
+          URL=""
+          for i in {1..20}; do
+            URL=$(grep -o 'https://[-a-zA-Z0-9@:%._\+~#=]*\.trycloudflare\.com' /tmp/cloudflared.log | head -n 1)
+            if [ -n "$URL" ]; then
+              break
+            fi
+            sleep 2
+          done
+
+          if [ -z "$URL" ]; then
+            echo "::error ::Cloudflare failed to generate URL. Full log:"
+            cat /tmp/cloudflared.log
+            exit 1
+          fi
 
           echo "=========================================================="
-          echo "YOUR PUFFERPANEL LOGIN LINK:"
-          grep -o 'https://[-a-zA-Z0-9@:%._\+~#=]*\.trycloudflare\.com' /tmp/cloudflared.log | head -n 1
+          echo "SUCCESS! ACCESS YOUR PUFFERPANEL HERE:"
+          echo "$URL"
           echo ""
-          echo "Login Username: admin (or admin@example.com)"
-          echo "Login Password: admin121"
+          echo "Username: admin (or admin@example.com)"
+          echo "Password: admin121"
           echo "=========================================================="
 
-      - name: Keep Runner Alive
+      - name: Keep Runner Alive (Up to 6 Hours)
         run: |
-          echo "PufferPanel is running. Click 'Cancel workflow' when done."
+          echo "PufferPanel is running. Click 'Cancel workflow' in GitHub to stop."
+          # Keeps this runner alive for ~5 hours 50 minutes (21000s)
           sleep 21000
