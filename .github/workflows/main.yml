@@ -1,4 +1,4 @@
-name: PufferPanel & Tailscale (12 Sequential Sessions)
+name: PufferPanel & Cloudflare CLI Tunnel
 
 on:
   workflow_dispatch:
@@ -8,23 +8,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
 
-    strategy:
-      max-parallel: 1
-      fail-fast: false
-      matrix:
-        session: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
-
-    name: Session ${{ matrix.session }} of 12
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Install Latest PufferPanel
         run: |
-          echo "=========================================================="
-          echo "Installing Latest PufferPanel for Session ${{ matrix.session }}..."
-          echo "=========================================================="
+          echo "Installing PufferPanel..."
           sudo apt-get update
           sudo apt-get install -y curl gnupg apt-transport-https
 
@@ -41,55 +31,43 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y pufferpanel
 
-          # Enable Docker support for PufferPanel game servers
+          # Enable Docker support
           sudo usermod -aG docker pufferpanel || true
 
       - name: Create Admin Account & Start PufferPanel
         run: |
-          echo "Creating admin account: admin / admin121 (admin@example.com)..."
-          # Modern PufferPanel supports direct CLI flags
-          sudo pufferpanel user add --name admin --email admin@example.com --password admin121 --admin || \
-            printf "admin\nadmin@example.com\nadmin121\nY\n" | sudo pufferpanel user add
+          echo "Creating admin account: admin / admin121..."
+          sudo pufferpanel user add --name admin --email admin@example.com --password admin121 --admin
 
           echo "Starting PufferPanel service..."
           sudo systemctl enable --now pufferpanel
-
           sleep 4
-          sudo systemctl status pufferpanel --no-pager || true
 
-      - name: Install Tailscale
+      - name: Install Cloudflare CLI (cloudflared)
         run: |
-          echo "Installing Tailscale..."
-          curl -fsSL https://tailscale.com/install.sh | sh
+          echo "Installing Cloudflare CLI..."
+          curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o cloudflared.deb
+          sudo dpkg -i cloudflared.deb
+          rm cloudflared.deb
 
-      - name: Connect Tailscale
-        env:
-          TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+      - name: Start Cloudflare CLI Tunnel & Print Link
         run: |
-          echo "=========================================================="
-          echo "Starting Tailscale for Session ${{ matrix.session }}..."
-          echo "=========================================================="
+          echo "Starting Cloudflare Quick Tunnel on port 8080..."
+          # Start cloudflared directly via CLI without any tokens or account
+          cloudflared tunnel --url http://localhost:8080 --logfile /tmp/cloudflared.log &
 
-          # Connect using auth key if provided, otherwise print interactive login link
-          if [ -n "$TAILSCALE_AUTHKEY" ]; then
-            echo "Auth key detected. Connecting automatically..."
-            sudo tailscale up --authkey="$TAILSCALE_AUTHKEY" --qr=false --hostname="pufferpanel-${{ matrix.session }}"
-          else
-            echo "Look for the authentication link below to approve this session:"
-            sudo tailscale up --qr=false --hostname="pufferpanel-${{ matrix.session }}"
-          fi
+          # Wait for the tunnel link to be generated
+          sleep 6
 
           echo "=========================================================="
-          TAILSCALE_IP=$(tailscale ip -4)
-          echo "Tailscale Connected!"
-          echo "Runner IP: ${TAILSCALE_IP}"
+          echo "YOUR PUFFERPANEL LOGIN LINK:"
+          grep -o 'https://[-a-zA-Z0-9@:%._\+~#=]*\.trycloudflare\.com' /tmp/cloudflared.log | head -n 1
           echo ""
-          echo ">>> Web Panel URL:    http://${TAILSCALE_IP}:8080"
-          echo ">>> Game Server IP:   ${TAILSCALE_IP}:<GAME_PORT>"
+          echo "Login Username: admin (or admin@example.com)"
+          echo "Login Password: admin121"
           echo "=========================================================="
 
-      - name: Keep Runner Alive (~5h 50m)
+      - name: Keep Runner Alive
         run: |
-          echo "Session ${{ matrix.session }} is actively running PufferPanel."
-          echo "Next session will automatically start when this finishes."
-          # Sleep for ~5 hours 5
+          echo "PufferPanel is running. Click 'Cancel workflow' when done."
+          sleep 21000
