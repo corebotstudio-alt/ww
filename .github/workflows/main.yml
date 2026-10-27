@@ -8,7 +8,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
 
-    # Executes 12 jobs strictly one after another
     strategy:
       max-parallel: 1
       fail-fast: false
@@ -21,23 +20,36 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install PufferPanel
+      - name: Install Latest PufferPanel
         run: |
           echo "=========================================================="
-          echo "Installing PufferPanel for Session ${{ matrix.session }}..."
+          echo "Installing Latest PufferPanel for Session ${{ matrix.session }}..."
           echo "=========================================================="
-          curl -s https://packagecloud.io/install/repositories/pufferpanel/pufferpanel/script.deb.sh | sudo bash
+          sudo apt-get update
+          sudo apt-get install -y curl gnupg apt-transport-https
+
+          sudo mkdir -p /etc/apt/keyrings
+          curl -fsSL https://packagecloud.io/pufferpanel/pufferpanel/gpgkey | gpg --dearmor | sudo tee /etc/apt/keyrings/pufferpanel.gpg > /dev/null
+
+          echo "X-Repolib-Name: PufferPanel
+          Types: deb
+          URIs: https://packagecloud.io/pufferpanel/pufferpanel/any/
+          Suites: any
+          Components: main
+          Signed-By: /etc/apt/keyrings/pufferpanel.gpg" | sudo tee /etc/apt/sources.list.d/pufferpanel.sources > /dev/null
+
           sudo apt-get update
           sudo apt-get install -y pufferpanel
 
-          # Allow PufferPanel to manage Docker containers
+          # Enable Docker support for PufferPanel game servers
           sudo usermod -aG docker pufferpanel || true
 
       - name: Create Admin Account & Start PufferPanel
         run: |
-          echo "Creating admin user: admin / admin"
-          # Inputs: Username -> Email -> Password -> Confirm Password -> Admin? (Y)
-          printf "admin\nadmin@example.com\nadmin\nadmin\nY\n" | sudo pufferpanel user add
+          echo "Creating admin account: admin / admin121 (admin@example.com)..."
+          # Modern PufferPanel supports direct CLI flags
+          sudo pufferpanel user add --name admin --email admin@example.com --password admin121 --admin || \
+            printf "admin\nadmin@example.com\nadmin121\nY\n" | sudo pufferpanel user add
 
           echo "Starting PufferPanel service..."
           sudo systemctl enable --now pufferpanel
@@ -58,7 +70,7 @@ jobs:
           echo "Starting Tailscale for Session ${{ matrix.session }}..."
           echo "=========================================================="
 
-          # Connect using auth key if set, otherwise print interactive login link
+          # Connect using auth key if provided, otherwise print interactive login link
           if [ -n "$TAILSCALE_AUTHKEY" ]; then
             echo "Auth key detected. Connecting automatically..."
             sudo tailscale up --authkey="$TAILSCALE_AUTHKEY" --qr=false --hostname="pufferpanel-${{ matrix.session }}"
@@ -80,5 +92,4 @@ jobs:
         run: |
           echo "Session ${{ matrix.session }} is actively running PufferPanel."
           echo "Next session will automatically start when this finishes."
-          # Sleep for ~5 hours 50 minutes (21000s) to transition cleanly before GitHub's 6-hour limit
-          sleep 21000
+          # Sleep for ~5 hours 5
