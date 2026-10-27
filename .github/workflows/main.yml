@@ -1,4 +1,4 @@
-name: PufferPanel & Cloudflare Tunnel (12 Sequential Sessions)
+name: PufferPanel & Tailscale (12 Sequential Sessions)
 
 on:
   workflow_dispatch:
@@ -30,6 +30,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y pufferpanel
 
+          # Allow PufferPanel to manage Docker containers
+          sudo usermod -aG docker pufferpanel || true
+
       - name: Create Admin Account & Start PufferPanel
         run: |
           echo "Creating admin user: admin / admin"
@@ -39,39 +42,43 @@ jobs:
           echo "Starting PufferPanel service..."
           sudo systemctl enable --now pufferpanel
 
-          # Wait a few seconds for PufferPanel to bind to port 8080
           sleep 4
           sudo systemctl status pufferpanel --no-pager || true
 
-      - name: Install Cloudflared
+      - name: Install Tailscale
         run: |
-          echo "Installing cloudflared..."
-          curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o cloudflared.deb
-          sudo dpkg -i cloudflared.deb
-          rm cloudflared.deb
+          echo "Installing Tailscale..."
+          curl -fsSL https://tailscale.com/install.sh | sh
 
-      - name: Start Cloudflare Tunnel
+      - name: Connect Tailscale
         env:
-          CLOUDFLARE_TUNNEL_TOKEN: ${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}
+          TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
         run: |
-          if [ -z "$CLOUDFLARE_TUNNEL_TOKEN" ]; then
-            echo "::error ::CLOUDFLARE_TUNNEL_TOKEN secret is not set! Please add it in your GitHub repository secrets."
-            exit 1
+          echo "=========================================================="
+          echo "Starting Tailscale for Session ${{ matrix.session }}..."
+          echo "=========================================================="
+
+          # Connect using auth key if set, otherwise print interactive login link
+          if [ -n "$TAILSCALE_AUTHKEY" ]; then
+            echo "Auth key detected. Connecting automatically..."
+            sudo tailscale up --authkey="$TAILSCALE_AUTHKEY" --qr=false --hostname="pufferpanel-${{ matrix.session }}"
+          else
+            echo "Look for the authentication link below to approve this session:"
+            sudo tailscale up --qr=false --hostname="pufferpanel-${{ matrix.session }}"
           fi
 
           echo "=========================================================="
-          echo "Starting Cloudflare Tunnel for Session ${{ matrix.session }}..."
+          TAILSCALE_IP=$(tailscale ip -4)
+          echo "Tailscale Connected!"
+          echo "Runner IP: ${TAILSCALE_IP}"
+          echo ""
+          echo ">>> Web Panel URL:    http://${TAILSCALE_IP}:8080"
+          echo ">>> Game Server IP:   ${TAILSCALE_IP}:<GAME_PORT>"
           echo "=========================================================="
-
-          # Start cloudflared in the background
-          cloudflared tunnel run --token "$CLOUDFLARE_TUNNEL_TOKEN" &
-
-          sleep 5
-          echo "Tunnel connected! PufferPanel (port 8080) is accessible via your domain."
 
       - name: Keep Runner Alive (~5h 50m)
         run: |
           echo "Session ${{ matrix.session }} is actively running PufferPanel."
-          echo "Next session will automatically take over the tunnel when this finishes."
+          echo "Next session will automatically start when this finishes."
           # Sleep for ~5 hours 50 minutes (21000s) to transition cleanly before GitHub's 6-hour limit
           sleep 21000
